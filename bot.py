@@ -296,7 +296,7 @@ def cmd_withdraw(msg):
 
 @bot.message_handler(commands=["support"])
 def cmd_support(msg):
-    bot.reply_to(msg, "💬 **Customer Support**\n• 24-hour online customer service\n• Telegram: https://t.me/monsterman197\n• Email: lucky077779999@gmail.com")
+    bot.reply_to(msg, "💬 **Customer Support**\n• 24-hour online customer service\n• Telegram: https://t.me/nexbitonlineservice\n• Email: lucky077779999@gmail.com")
 
 # -------- admin commands -----------
 @bot.message_handler(commands=["status"])
