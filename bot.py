@@ -15,7 +15,7 @@ import psutil  # pip install psutil
 # Configuration (replace or use env variables)
 # ----------------------------
 # You gave these values; for production prefer to use environment variables.
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8344095901:AAEZUTB0FZQooWVsIK1p-cTg_3lu6ARR4Ec")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8344095901:AAEBW5JeGMWUUEqYIE6_IktCNC7N-jme2b0")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6062973135"))  # your TG ID
 
 # Log file path
@@ -389,3 +389,4 @@ if __name__ == "__main__":
         time.sleep(3)
         # exit to let platform restart
         os._exit(1)
+
