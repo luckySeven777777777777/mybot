@@ -1,200 +1,270 @@
-# bot.py (Enhanced version)
-import telebot
-import json
-import time
-import threading
-import websocket
-import logging
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Enhanced NEXBIT BOT - full rewrite
+Features:
+ - Admin system (ADMIN_ID)
+ - Auto market push (symbols)
+ - WS thread (OKX preferred, fallback to Binance REST)
+ - Heartbeat / process monitoring
+ - Safe logging (RotatingFileHandler)
+ - Admin commands: /status, /restart, /log
+ - Original user commands preserved with original reply content
+ - Self-recovering polling loop
+"""
+
 import os
 import sys
+import time
+import json
+import logging
+import threading
 import traceback
-from datetime import datetime
-import psutil  # pip install psutil
+import requests
+from logging.handlers import RotatingFileHandler
+from datetime import datetime, timedelta
+import telebot
+import websocket
 
 # ----------------------------
-# Configuration (replace or use env variables)
+# CONFIG (use environment variables in production)
 # ----------------------------
-# You gave these values; for production prefer to use environment variables.
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8344095901:AAEBW5JeGMWUUEqYIE6_IktCNC7N-jme2b0")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6062973135"))  # your TG ID
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()  # set in Railway variables
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or 0)  # set in Railway variables
+MARKET_PUSH_CHAT_ID = int(os.getenv("MARKET_PUSH_CHAT_ID", str(ADMIN_ID)) or ADMIN_ID)
 
-# Log file path
-LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-os.makedirs(LOG_DIR, exist_ok=True)
-
-# ----------------------------
-# Logging setup
-# ----------------------------
-logger = logging.getLogger("mybot")
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-
-fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
-fh.setFormatter(formatter)
-logger.addHandler(fh)
-
-sh = logging.StreamHandler(sys.stdout)
-sh.setFormatter(formatter)
-logger.addHandler(sh)
-
-# ----------------------------
-# Bot init
-# ----------------------------
-bot = telebot.TeleBot(BOT_TOKEN)
-START_TIME = time.time()
-
-# Markets to watch (OKX format SYMBOL-USDT)
-WATCH_SYMBOLS = [
+# Symbols to monitor (user requested)
+SYMBOLS = [
     "BTC-USDT", "ETH-USDT", "DOGE-USDT", "SOL-USDT",
     "BNB-USDT", "XRP-USDT", "TRX-USDT", "USDC-USDT"
 ]
 
-# Shared market state
-MARKET = {s: {"price": "Retrieving..."} for s in WATCH_SYMBOLS}
-MARKET_LOCK = threading.Lock()
+# Provide lowercase symbol forms for exchanges:
+BINANCE_SYMBOLS = [s.replace("-", "").lower() for s in SYMBOLS]  # e.g. btcusdt
+OKX_SYMBOLS = [s.replace("-", "-").lower() for s in SYMBOLS]    # OKX uses e.g. BTC-USDT
+
+# Logging / files
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "bot.log")
+
+# Timing settings
+MARKET_PUSH_INTERVAL = int(os.getenv("MARKET_PUSH_INTERVAL", "300"))  # seconds
+HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "30"))  # seconds
+WS_RECONNECT_DELAY = 5  # seconds
 
 # ----------------------------
-# Helper functions
+# Ensure logs directory exists (safe check)
 # ----------------------------
-def tail_file(path, n_lines=200):
+try:
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+except Exception:
+    # fallback, if exists or race condition, ignore
+    pass
+
+# ----------------------------
+# Configure logger
+# ----------------------------
+logger = logging.getLogger("nexbit_bot")
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+
+file_handler = RotatingFileHandler(LOG_FILE, maxBytes=3 * 1024 * 1024, backupCount=3, encoding="utf-8")
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+
+# ----------------------------
+# Basic state
+# ----------------------------
+START_TIME = datetime.utcnow()
+STATE = {
+    "okx_ws": False,
+    "binance_ws": False,
+    "last_market": {},
+    "last_push": None,
+    "heartbeat": None,
+}
+
+# ----------------------------
+# Initialize bot
+# ----------------------------
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN is not set. Set environment variable BOT_TOKEN.")
+    raise RuntimeError("BOT_TOKEN is required")
+
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+
+# ----------------------------
+# Utility helpers
+# ----------------------------
+def is_admin(chat_id: int) -> bool:
+    return chat_id == ADMIN_ID
+
+def uptime() -> str:
+    delta = datetime.utcnow() - START_TIME
+    return str(delta).split(".")[0]
+
+def tail(filepath: str, lines: int = 200) -> str:
+    """Read last N lines of a file."""
+    if not os.path.isfile(filepath):
+        return "Log file not found."
     try:
-        with open(path, "rb") as f:
+        with open(filepath, "rb") as f:
             f.seek(0, os.SEEK_END)
-            file_size = f.tell()
-            block_size = 1024
+            end = f.tell()
+            size = 1024
             data = b""
-            lines = []
-            while file_size > 0 and len(lines) < n_lines:
-                read_size = min(block_size, file_size)
-                f.seek(file_size - read_size)
-                chunk = f.read(read_size) + data
-                lines = chunk.splitlines()
-                file_size -= read_size
-                data = chunk
-            text = b"\n".join(lines[-n_lines:]).decode("utf-8", errors="replace")
-            return text
+            while lines > 0 and end > 0:
+                step = min(size, end)
+                f.seek(end - step)
+                chunk = f.read(step)
+                data = chunk + data
+                end -= step
+                lines -= chunk.count(b"\n")
+            text = data.decode("utf-8", errors="ignore")
+            lines_list = text.strip().splitlines()[-200:]
+            return "\n".join(lines_list)
     except Exception as e:
         return f"Error reading log: {e}"
 
-def is_admin(user_id):
-    return int(user_id) == int(ADMIN_ID)
+# ----------------------------
+# Market functions (simple REST fallback + optional WS)
+# ----------------------------
+def fetch_binance_prices(symbols):
+    """Fetch prices from Binance REST API (simple)."""
+    out = {}
+    for s in symbols:
+        try:
+            pair = s.replace("-", "").lower()
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={pair.upper()}"
+            r = requests.get(url, timeout=6)
+            if r.status_code == 200:
+                data = r.json()
+                out[s] = float(data.get("price", 0.0))
+            else:
+                out[s] = None
+        except Exception as e:
+            logger.warning("fetch_binance_prices error for %s: %s", s, e)
+            out[s] = None
+    return out
 
-def safe_send_message(chat_id, text, **kwargs):
-    try:
-        bot.send_message(chat_id, text, **kwargs)
-    except Exception as e:
-        logger.exception("Failed to send message: %s", e)
-
-def uptime():
-    seconds = int(time.time() - START_TIME)
-    m, s = divmod(seconds, 60)
-    h, m = divmod(m, 60)
-    d, h = divmod(h, 24)
-    return f"{d}d {h}h {m}m {s}s"
+def format_market_message(market_dict):
+    lines = []
+    for s in SYMBOLS:
+        price = market_dict.get(s)
+        if price is None:
+            lines.append(f"{s}: N/A")
+        else:
+            # show a bit prettier
+            if price >= 1:
+                lines.append(f"{s}: {price}")
+            else:
+                lines.append(f"{s}: {price:.6f}")
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    return "```\n" + "\n".join(lines) + f"\n``` \n_Timestamp: {ts}_"
 
 # ----------------------------
-# OKX WebSocket Thread
+# OKX WS (lightweight subscriber) - attempt but fallback to REST loop
 # ----------------------------
-OKX_WS_URL = "wss://ws.okx.com:8443/ws/v5/public"
-
-def build_okx_subscribe():
-    args = []
-    # subscribe tickers for each symbol
-    for s in WATCH_SYMBOLS:
-        args.append({"channel": "tickers", "instId": s})
-    return {"op": "subscribe", "args": args}
-
-def on_okx_open(ws):
-    logger.info("OKX WebSocket connected, subscribing...")
-    sub = build_okx_subscribe()
+def okx_ws_loop():
+    """
+    Minimal OKX WebSocket connector to demonstrate (public).
+    If blocked (geolocation), we'll fallback gracefully.
+    """
     try:
-        ws.send(json.dumps(sub))
-    except Exception as e:
-        logger.exception("Failed to send subscribe: %s", e)
-
-def on_okx_message(ws, message):
-    try:
-        data = json.loads(message)
-        # OKX sends {"arg": {...}} and {"data":[{...}]}
-        if "data" in data and isinstance(data["data"], list) and len(data["data"])>0:
-            item = data["data"][0]
-            # tickers channel: item has 'instId' and 'last' or 'lastSz' or 'lastPx' depending
-            inst = item.get("instId")
-            price = item.get("last") or item.get("lastSz") or item.get("px") or item.get("lastPx") or item.get("last")
-            if inst and price:
-                with MARKET_LOCK:
-                    if inst in MARKET:
-                        MARKET[inst]["price"] = str(price)
-    except Exception as e:
-        logger.exception("OKX parse error: %s", e)
-
-def on_okx_error(ws, error):
-    logger.error("OKX WebSocket error: %s", error)
-
-def on_okx_close(ws, code, reason):
-    logger.warning("OKX WebSocket closed: %s / %s. Reconnecting in 5s...", code, reason)
-    time.sleep(5)
-    start_okx_ws()
-
-def start_okx_ws():
-    def run():
-        while True:
+        STATE["okx_ws"] = False
+        url = "wss://ws.okx.com:8443/ws/v5/public"
+        def on_open(ws):
             try:
-                ws = websocket.WebSocketApp(
-                    OKX_WS_URL,
-                    on_open=lambda w: on_okx_open(w),
-                    on_message=lambda w, m: on_okx_message(w, m),
-                    on_error=lambda w, e: on_okx_error(w, e),
-                    on_close=lambda w, c, r: on_okx_close(w, c, r)
-                )
-                # run_forever blocks, will return on close/error
-                ws.run_forever(ping_interval=20, ping_timeout=10)
+                logger.info("OKX WS opened, subscribing...")
+                # subscribe ticker for requested instruments
+                insts = [{"instId": s} for s in SYMBOLS]
+                params = {"op": "subscribe", "args": [{"channel": "tickers", "instId": s} for s in SYMBOLS]}
+                ws.send(json.dumps(params))
+                STATE["okx_ws"] = True
+                logger.info("OKX WS subscription sent.")
             except Exception as e:
-                logger.exception("OKX WS thread exception: %s", e)
-            logger.info("OKX WS restarting in 5 seconds...")
-            time.sleep(5)
-    t = threading.Thread(target=run, daemon=True, name="okx-ws")
-    t.start()
-    logger.info("OKX WS thread started.")
+                logger.exception("OKX on_open error: %s", e)
+
+        def on_message(ws, message):
+            try:
+                obj = json.loads(message)
+                # parse tickers updates
+                if "data" in obj and isinstance(obj["data"], list):
+                    for item in obj["data"]:
+                        instId = item.get("instId")
+                        last = item.get("last")
+                        if instId and last:
+                            key = instId.replace("-", "-").upper()
+                            STATE["last_market"][key] = float(last)
+            except Exception:
+                logger.debug("OKX message parse fail: %s", traceback.format_exc())
+
+        def on_error(ws, err):
+            logger.warning("OKX WS error: %s", err)
+
+        def on_close(ws, code, reason):
+            STATE["okx_ws"] = False
+            logger.info("OKX WS closed - %s %s", code, reason)
+
+        ws = websocket.WebSocketApp(url, on_open=on_open, on_message=on_message, on_error=on_error, on_close=on_close)
+        ws.run_forever(ping_interval=20, ping_timeout=10)
+    except Exception:
+        logger.exception("OKX WS loop crashed.")
+    finally:
+        STATE["okx_ws"] = False
+        logger.info("OKX WS loop exiting, will retry after delay.")
+        time.sleep(WS_RECONNECT_DELAY)
 
 # ----------------------------
-# Heartbeat / keepalive thread
+# Background threads
 # ----------------------------
-def heartbeat_loop():
+def heartbeat_thread():
     while True:
         try:
-            # light heartbeat to keep session alive
-            bot.get_me()
-            logger.debug("Heartbeat OK")
-        except Exception as e:
-            logger.exception("Heartbeat failed, will continue: %s", e)
-        time.sleep(30)
+            STATE["heartbeat"] = datetime.utcnow().isoformat()
+            logger.info("Heartbeat: alive; uptime=%s", uptime())
+        except Exception:
+            logger.exception("Heartbeat exception")
+        time.sleep(HEARTBEAT_INTERVAL)
 
-def start_heartbeat():
-    t = threading.Thread(target=heartbeat_loop, daemon=True, name="heartbeat")
-    t.start()
-    logger.info("Heartbeat thread started.")
+def market_push_thread():
+    """Periodically fetch market and push to configured chat."""
+    while True:
+        try:
+            # Prefer REST (simple)
+            prices = fetch_binance_prices(SYMBOLS)
+            STATE["last_market"].update(prices)
+            msg = format_market_message(STATE["last_market"])
+            # send to target
+            try:
+                bot.send_message(MARKET_PUSH_CHAT_ID, f"📈 *Market Snapshot*\n{msg}")
+            except Exception as e:
+                logger.warning("Failed to send market snapshot: %s", e)
+            STATE["last_push"] = datetime.utcnow().isoformat()
+        except Exception:
+            logger.exception("market_push_thread error")
+        time.sleep(MARKET_PUSH_INTERVAL)
+
+def okx_ws_runner():
+    """Run OKX WS loop with auto-reconnect."""
+    while True:
+        try:
+            okx_ws_loop()
+        except Exception:
+            logger.exception("okx_ws_runner exception")
+        time.sleep(WS_RECONNECT_DELAY)
 
 # ----------------------------
-# Admin commands & helpers
+# Admin commands & common commands (preserve original replies)
 # ----------------------------
-def require_admin(func):
-    def wrapper(message, *args, **kwargs):
-        uid = message.from_user.id
-        if not is_admin(uid):
-            logger.warning("Unauthorized admin attempt: %s", uid)
-            safe_send_message(message.chat.id, "🔒 只有管理员可以执行此命令。")
-            return
-        return func(message, *args, **kwargs)
-    return wrapper
 
-# ----------------------------
-# User commands (kept original replies)
-# ----------------------------
-@bot.message_handler(commands=["start"])
-def cmd_start(msg):
-    text = """
+# Keep original text blocks as in user's earlier file (translated where necessary)
+START_TEXT = """
 🤖 **Welcome to NEXBIT-BOT** 🤖
 
 Available Commands:
@@ -210,14 +280,20 @@ Available Commands:
 /support - Customer Support
 /alert - Price alert (coming soon)
 """
-    bot.reply_to(msg, text)
+
+@bot.message_handler(commands=["start"])
+def cmd_start(msg):
+    bot.reply_to(msg, START_TEXT)
 
 @bot.message_handler(commands=["market"])
 def cmd_market(msg):
     text = "📊 **Real-time Market Data**\n\n"
-    with MARKET_LOCK:
-        for s in WATCH_SYMBOLS:
-            text += f"{s}: {MARKET[s]['price']}\n"
+    for s in SYMBOLS:
+        p = STATE["last_market"].get(s)
+        if p is None:
+            text += f"{s}: Retrieving...\n"
+        else:
+            text += f"{s}: {p}\n"
     bot.reply_to(msg, text)
 
 @bot.message_handler(commands=["analysis"])
@@ -264,25 +340,25 @@ def cmd_feature(msg):
 """
     bot.reply_to(msg, text)
 
-@bot.message_handler(commands=["Register"])
+@bot.message_handler(commands=["Register", "register"])
 def cmd_register(msg):
     bot.reply_to(msg, "📝 **Registration Guide**:\nhttps://Price alert feature coming soon..")
 
-@bot.message_handler(commands=["Deposit"])
+@bot.message_handler(commands=["Deposit", "deposit"])
 def cmd_deposit(msg):
     bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://Price alert feature coming soon..")
 
-@bot.message_handler(commands=["Withdraw"])
+@bot.message_handler(commands=["Withdraw", "withdraw"])
 def cmd_withdraw(msg):
     bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://Price alert feature coming soon..")
 
-@bot.message_handler(commands=["Alert"])
+@bot.message_handler(commands=["Alert", "alert"])
 def cmd_alert(msg):
     bot.reply_to(msg, "⏳ **Price alert feature coming soon...**")
 
-@bot.message_handler(commands=["Bind"])
+@bot.message_handler(commands=["Bind", "bind"])
 def cmd_bind(msg):
-    bot.reply_to(msg, "⏳ **Price alert feature coming soon...**")
+    bot.reply_to(msg, "⏳ **Bind feature coming soon...**")
 
 @bot.message_handler(commands=["support"])
 def cmd_support(msg):
@@ -295,98 +371,123 @@ def cmd_support(msg):
     bot.reply_to(msg, text)
 
 # ----------------------------
-# Admin-only commands
+# ADMIN commands
 # ----------------------------
 @bot.message_handler(commands=["status"])
-@require_admin
 def cmd_status(msg):
-    p = psutil.Process(os.getpid())
-    mem = p.memory_info().rss / (1024*1024)
-    threads = threading.active_count()
-    text = f"✅ Running\nUptime: {uptime()}\nMemory: {mem:.1f} MB\nThreads: {threads}\nWatch symbols: {', '.join(WATCH_SYMBOLS)}"
-    bot.reply_to(msg, text)
+    chat_id = msg.from_user.id
+    if not is_admin(chat_id):
+        bot.reply_to(msg, "You are not authorized to use this command.")
+        logger.warning("Unauthorized /status attempt by %s", chat_id)
+        return
+    info = {
+        "uptime": uptime(),
+        "start_time": START_TIME.isoformat(),
+        "heartbeat": STATE.get("heartbeat"),
+        "last_push": STATE.get("last_push"),
+        "okx_ws": STATE.get("okx_ws"),
+        "market_symbols": SYMBOLS,
+    }
+    txt = "*Bot Status*\n"
+    for k, v in info.items():
+        txt += f"{k}: `{v}`\n"
+    bot.reply_to(msg, txt)
 
 @bot.message_handler(commands=["log"])
-@require_admin
 def cmd_log(msg):
-    tail = tail_file(LOG_FILE, n_lines=300)
-    # If too long, send as file
-    if len(tail) > 3500:
-        with open(LOG_FILE, "rb") as f:
-            bot.send_document(msg.chat.id, f)
-    else:
-        bot.reply_to(msg, f"📝 Last logs:\n\n{tail}")
+    chat_id = msg.from_user.id
+    if not is_admin(chat_id):
+        bot.reply_to(msg, "You are not authorized to use this command.")
+        logger.warning("Unauthorized /log attempt by %s", chat_id)
+        return
+    try:
+        parts = msg.text.strip().split()
+        n = 200
+        if len(parts) >= 2:
+            try:
+                n = int(parts[1])
+            except:
+                n = 200
+        content = tail(LOG_FILE, lines=n)
+        if len(content) > 3900:
+            # send as file
+            with open(LOG_FILE, "rb") as f:
+                bot.send_document(chat_id, f)
+        else:
+            bot.reply_to(msg, f"```\n{content}\n```")
+    except Exception:
+        bot.reply_to(msg, "Failed to read log.")
+        logger.exception("Failed to deliver logs")
 
 @bot.message_handler(commands=["restart"])
-@require_admin
 def cmd_restart(msg):
-    bot.reply_to(msg, "🔄 Restarting bot now...")
-    logger.info("Admin requested restart. Exiting process to allow restart.")
-    # flush log handlers
-    for h in logger.handlers:
-        try:
-            h.flush()
-        except:
-            pass
-    time.sleep(1)
-    # exit; platform (Railway) will restart process
+    chat_id = msg.from_user.id
+    if not is_admin(chat_id):
+        bot.reply_to(msg, "You are not authorized to use this command.")
+        logger.warning("Unauthorized /restart attempt by %s", chat_id)
+        return
+    bot.reply_to(msg, "Restarting bot... goodbye 👋")
+    logger.info("Admin requested restart; exiting.")
+    # allow reply to be sent
+    time.sleep(1.0)
     os._exit(0)
 
 # ----------------------------
-# Generic error handling wrapper for handlers
+# Fallback - unknown messages -> can implement autoresponder
 # ----------------------------
-def handler_safe(fn):
-    def wrapped(message):
-        try:
-            return fn(message)
-        except Exception as e:
-            logger.exception("Handler error: %s", e)
-            try:
-                bot.reply_to(message, "🚨 机器人发生错误，管理员已被通知。")
-            except:
-                pass
-    return wrapped
-
-# apply wrapper to handlers that need it (if you add more handlers, wrap them)
-# (In this file we've defined handlers already; for new ones, use decorator or wrapper)
+@bot.message_handler(func=lambda m: True)
+def catch_all(msg):
+    # Example: auto reply simple keywords or pass
+    text = msg.text.strip() if msg.text else ""
+    # simple auto-responses:
+    if "price" in text.lower():
+        cmd_market(msg)
+        return
+    # else ignore or respond with menu
+    # to avoid spam, do not reply to all messages
+    return
 
 # ----------------------------
-# Start background threads & bot polling
+# Start background threads
 # ----------------------------
-def start_background():
+def start_background_services():
     logger.info("Starting background services...")
-    start_okx_ws()
-    start_heartbeat()
+    # Heartbeat
+    t_hb = threading.Thread(target=heartbeat_thread, daemon=True, name="heartbeat")
+    t_hb.start()
+    # Market push
+    t_mp = threading.Thread(target=market_push_thread, daemon=True, name="market_push")
+    t_mp.start()
+    # OKX WS runner
+    t_ws = threading.Thread(target=okx_ws_runner, daemon=True, name="okx_ws")
+    t_ws.start()
+    logger.info("Background threads started.")
 
-def run_bot_polling():
-    # keep polling forever, auto-reconnect on exceptions
+# ----------------------------
+# Main polling loop with auto-reconnect
+# ----------------------------
+def main_loop():
+    logger.info("Program starting...")
+    start_background_services()
     while True:
         try:
             logger.info("Starting bot polling...")
-            bot.polling(none_stop=True, interval=0, timeout=20)
+            bot.polling(non_stop=True, interval=0, timeout=20)
         except Exception as e:
-            logger.exception("Polling exception, will sleep and restart: %s", e)
-            time.sleep(5)
+            logger.exception("Polling exception, will restart polling in 3s: %s", e)
+            time.sleep(3)
 
 # ----------------------------
 # Entry point
 # ----------------------------
 if __name__ == "__main__":
-    logger.info("Program starting...")
     try:
-        start_background()
-
-        # Start polling in main thread (so os._exit will work on restart)
-        run_bot_polling()
+        main_loop()
     except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt received, exiting.")
-        sys.exit(0)
+        logger.info("KeyboardInterrupt - exiting")
     except SystemExit:
-        logger.info("SystemExit called, exiting.")
-        raise
+        logger.info("SystemExit - exiting")
     except Exception:
-        logger.exception("Unhandled exception in main, exiting in 3s.")
-        time.sleep(3)
-        # exit to let platform restart
-        os._exit(1)
-
+        logger.exception("Fatal error - exiting")
+    finally:
+        logger.info("Bot stopped.")
