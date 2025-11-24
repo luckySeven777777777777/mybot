@@ -238,20 +238,50 @@ ENHANCED_MENU_TEXT = """
 """
 
 @bot.message_handler(commands=["start"])
-def cmd_start(message):
+def start_cmd(message):
     chat_id = message.chat.id
     chat_type = message.chat.type
-    welcome = "🤖 **Welcome to NEXBIT-BOT** 🤖\n\n"
-    # Auto display group id if in group
+
+    # --- 公共欢迎菜单（给所有人） ---
+    welcome_text = "🤖 Welcome to NEXBIT-BOT 🤖\n\n"
+
     if chat_type in ["group", "supergroup"]:
-        welcome += f"📌 **Group Chat ID:** `{chat_id}`\n"
-        welcome += "（管理员可在本群发送 /bindgroup 自动绑定为行情推送目标）\n\n"
-    # combine enhanced menu + original commands
-    welcome += "📋 *Basic & Legacy Commands:*\n"
-    welcome += ORIGINAL_MENU_TEXT + "\n"
-    welcome += "📈 *Market Tools & Admin:*\n"
-    welcome += ENHANCED_MENU_TEXT
-    bot.reply_to(message, welcome, parse_mode="Markdown")
+        welcome_text += f"📌 **Group Chat ID:** `{chat_id}`\n"
+        welcome_text += "(管理员可在本群发送 /bindgroup 自动绑定行情推送目标)\n\n"
+
+    # 原本的普通命令菜单
+    welcome_text += """
+📄 Basic & Legacy Commands:
+
+/market - View Real-Time Market Data
+/analysis - Market analysis
+/safe - Security tips
+/deposit - Deposit Now
+/Bind - Link wallet address
+/withdraw - Withdraw Now
+/mobile - Mobile Version
+/feature - Platform Features
+/support - Customer Support
+/alert - Price alert (coming soon)
+"""
+
+    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+
+    # --- 只给管理员发送私有菜单 ---
+    if message.from_user.id in ADMIN_IDS:
+        admin_text = """
+🛠 **Admin Tools & Market Control**
+
+/status - Bot status
+/restart - Restart bot
+/logs - View logs
+/admins - View admin list
+/addadmin <id> - Add admin
+/deladmin <id> - Remove admin
+/bindgroup - Bind this group as market push target
+/push - Force push snapshot now
+"""
+        bot.send_message(message.chat.id, admin_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=["market"])
 def cmd_market(message):
