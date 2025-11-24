@@ -370,7 +370,7 @@ def cmd_support(msg):
     text = """
 💬 **Customer Support**
 • 24-hour online customer service
-• Telegram: https://t.me/monsterman197  
+• Telegram: https://t.me/nexbitonlineservice
 • Email: lucky077779999@gmail.com
 """
     bot.reply_to(msg, text)
