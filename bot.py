@@ -213,7 +213,6 @@ def market_push_loop():
 
 # --- Original/old command texts are preserved below and used in /start ---
 ORIGINAL_MENU_TEXT = """
-/register - Registration
 /market - View Real-Time Market Data
 /analysis - Market analysis
 /safe - Security tips
@@ -282,11 +281,6 @@ def cmd_mobile(msg):
 @bot.message_handler(commands=["feature"])
 def cmd_feature(msg):
     bot.reply_to(msg, "✨ **Platform Features**\n• Real-time market data\n• Automatic analysis\n• Advanced alerts\n• In-depth data push")
-
-@bot.message_handler(commands=["register"])
-def cmd_register(msg):
-    # Map old register behavior to start/help text
-    bot.reply_to(msg, "📝 **Registration Guide**:\nhttps://Price alert feature coming soon..")
 
 @bot.message_handler(commands=["Bind","bind"])
 def cmd_bind(msg):
