@@ -3,45 +3,57 @@ import json
 import time
 import threading
 import websocket
+import traceback
 
 # ===========================
-# 配置
+# Telegram Bot Token
 # ===========================
-BOT_TOKEN = "8344095901:AAEZUTB0FZQooWVsIK1p-cTg_3lu6ARR4Ec"   # ⚠️ 请务必替换 BotFather 重置后的新 Token
+BOT_TOKEN = "8344095901:AAEZUTB0FZQooWVsIK1p-cTg_3lu6ARR4Ec"
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 监控币种
-SYMBOLS = ["btcusdt", "ethusdt", "bnbusdt", "solusdt", "dogeusdt"]
+# ===========================
+# 支持的币种（OKX 格式）
+# ===========================
+SYMBOLS = [
+   "BTC-USDT",
+    "ETH-USDT",
+    "DOGE-USDT",
+    "SOL-USDT",
+    "BNB-USDT",
+    "XRP-USDT",
+    "TRX-USDT",
+    "USDC-USDT"
+]
+
+# 保存行情
 MARKET = {s: {"price": "Retrieving..."} for s in SYMBOLS}
 
-
-# ===========================
-# WebSocket URL 生成
-# ===========================
-def build_ws_url():
-    streams = []
-    streams += [f"{s}@ticker" for s in SYMBOLS]
-    streams += [f"{s}@kline_1m" for s in SYMBOLS]
-    streams += [f"{s}@depth5" for s in SYMBOLS]
-    return "wss://stream.binance.com:9443/stream?streams=" + "/".join(streams)
+# 全局 WebSocket
+ws_global = None
 
 
 # ===========================
-# WebSocket 数据处理
+# OKX WebSocket 回调
 # ===========================
 def on_message(ws, message):
     try:
         data = json.loads(message)
-        stream = data.get("stream", "")
-        payload = data.get("data", {})
 
-        # ticker 更新最新价格
-        if "@ticker" in stream:
-            symbol = payload["s"].lower()
-            MARKET[symbol]["price"] = payload["c"]
+        # 非行情数据
+        if "data" not in data:
+            return
+
+        tick = data["data"][0]
+        symbol = tick["instId"]
+        price = tick["last"]
+
+        MARKET[symbol]["price"] = price
+
+        print(f"{symbol} : {price}")
 
     except Exception as e:
-        print("解析错误：", e)
+        print("处理行情时发生错误：", e)
+        print(traceback.format_exc())
 
 
 def on_error(ws, error):
@@ -51,32 +63,52 @@ def on_error(ws, error):
 def on_close(ws, close_status_code, close_msg):
     print("WebSocket 已关闭，5 秒后重连...")
     time.sleep(5)
-    start_websocket()
+    start_ws()
 
 
 def on_open(ws):
-    print("WebSocket 已连接!")
+    print("WebSocket 已连接！")
+
+    subs = [{"channel": "tickers", "instId": s} for s in SYMBOLS]
+
+    msg = {
+        "op": "subscribe",
+        "args": subs
+    }
+
+    ws.send(json.dumps(msg))
+    print("已订阅：", SYMBOLS)
 
 
 # ===========================
-# 启动 WebSocket
+# 启动 OKX WebSocket
 # ===========================
-def start_websocket():
-    url = build_ws_url()
-    print("订阅：", url)
+def start_ws():
+    global ws_global
+    url = "wss://ws.okx.com:8443/ws/v5/public"
+
+    websocket.enableTrace(False)
 
     ws = websocket.WebSocketApp(
         url,
         on_open=on_open,
         on_message=on_message,
-        on_error=on_error,
         on_close=on_close,
+        on_error=on_error
     )
-    ws.run_forever(ping_interval=20, ping_timeout=10)  # 更稳定
+
+    ws_global = ws
+
+    while True:
+        try:
+            ws.run_forever(ping_interval=20, ping_timeout=10)
+        except Exception as e:
+            print("WebSocket 运行错误：", e)
+            time.sleep(5)
 
 
 # ===========================
-# /start
+# Telegram 指令
 # ===========================
 @bot.message_handler(commands=["start"])
 def cmd_start(msg):
@@ -99,20 +131,14 @@ Available Commands:
     bot.reply_to(msg, text)
 
 
-# ===========================
-# /market 指令
-# ===========================
 @bot.message_handler(commands=["market"])
 def cmd_market(msg):
     text = "📊 **Real-time Market Data**\n\n"
     for s in SYMBOLS:
-        text += f"{s.upper()}: {MARKET[s]['price']}\n"
+        text += f"{s}: {MARKET[s]['price']}\n"
     bot.reply_to(msg, text)
 
 
-# ===========================
-# /analysis
-# ===========================
 @bot.message_handler(commands=["analysis"])
 def cmd_analysis(msg):
     text = """
@@ -125,9 +151,6 @@ def cmd_analysis(msg):
     bot.reply_to(msg, text)
 
 
-# ===========================
-# /safe
-# ===========================
 @bot.message_handler(commands=["safe"])
 def cmd_safe(msg):
     text = """
@@ -140,9 +163,6 @@ def cmd_safe(msg):
     bot.reply_to(msg, text)
 
 
-# ===========================
-# /mobile
-# ===========================
 @bot.message_handler(commands=["mobile"])
 def cmd_mobile(msg):
     text = """
@@ -155,9 +175,6 @@ def cmd_mobile(msg):
     bot.reply_to(msg, text)
 
 
-# ===========================
-# /feature
-# ===========================
 @bot.message_handler(commands=["feature"])
 def cmd_feature(msg):
     text = """
@@ -170,35 +187,31 @@ def cmd_feature(msg):
     bot.reply_to(msg, text)
 
 
-# ===========================
-# 注册 / 充值 / 提现 / 提醒 / 绑定
-# ===========================
 @bot.message_handler(commands=["Register"])
 def cmd_register(msg):
-    bot.reply_to(msg, "📝 **Registration Guide**:\nhttps://Price alert feature coming soon..")
+    bot.reply_to(msg, "📝 **Registration Guide**:\nhttps://Price alert feature coming soon.." )
 
 
 @bot.message_handler(commands=["Deposit"])
 def cmd_deposit(msg):
-    bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://Price alert feature coming soon..")
+    bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://Price alert feature coming soon.." )
 
 
 @bot.message_handler(commands=["Withdraw"])
 def cmd_withdraw(msg):
-    bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://Price alert feature coming soon..")
+    bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://Price alert feature coming soon.." )
 
 
 @bot.message_handler(commands=["Alert"])
 def cmd_alert(msg):
     bot.reply_to(msg, "⏳ **Price alert feature coming soon...**")
 
-@bot.message_handler(commands=["Bind"])
-def cmd_alert(msg):
-    bot.reply_to(msg, "⏳ **Price alert feature coming soon...**")
 
-# ===========================
-# /support
-# ===========================
+@bot.message_handler(commands=["Bind"])
+def cmd_bind(msg):
+    bot.reply_to(msg, "⏳ **Wallet binding feature coming soon...**")
+
+
 @bot.message_handler(commands=["support"])
 def cmd_support(msg):
     text = """
@@ -211,20 +224,17 @@ def cmd_support(msg):
 
 
 # ===========================
-# 启动 WS 后台线程
+# 启动后台线程 + Telegram 机器人
 # ===========================
-def run_ws_thread():
-    t = threading.Thread(target=start_websocket)
+def start_threads():
+    t = threading.Thread(target=start_ws)
     t.daemon = True
     t.start()
 
 
-# ===========================
-# 主程序
-# ===========================
 if __name__ == "__main__":
     print("Program starting...")
-    run_ws_thread()
+    start_threads()
 
     while True:
         try:
