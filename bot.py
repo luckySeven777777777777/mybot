@@ -217,7 +217,7 @@ ORIGINAL_MENU_TEXT = """
 /analysis - Market analysis
 /safe - Security tips
 /deposit - Deposit Now
-/Bind - Link wallet address
+/Trade - Start A Secure Trade
 /withdraw - Withdraw Now
 /mobile - Mobile Version
 /feature - Platform Features 
@@ -251,13 +251,13 @@ def start_cmd(message):
 
     # 原本的普通命令菜单
     welcome_text += """
-📄 Basic & Legacy Commands:
+📈Select the latest market to view the command 📊
 
 /market - View Real-Time Market Data
 /analysis - Market analysis
 /safe - Security tips
 /deposit - Deposit Now
-/Bind - Link wallet address
+/Trade - Start A Secure Trade
 /withdraw - Withdraw Now
 /mobile - Mobile Version
 /feature - Platform Features
@@ -312,17 +312,17 @@ def cmd_mobile(msg):
 def cmd_feature(msg):
     bot.reply_to(msg, "✨ **Platform Features**\n• Real-time market data\n• Automatic analysis\n• Advanced alerts\n• In-depth data push")
 
-@bot.message_handler(commands=["Bind","bind"])
-def cmd_bind(msg):
-    bot.reply_to(msg, "⏳ **Bind feature coming soon...**")
+@bot.message_handler(commands=["trade","Trade"])
+def cmd_deposit(msg):
+    bot.reply_to(msg, "💰 *Trade Guide**:\nhttps://www.nexbitsafe.com/trade")
 
 @bot.message_handler(commands=["deposit","Deposit"])
 def cmd_deposit(msg):
-    bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://Price alert feature coming soon..")
+    bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://www.nexbitsafe.com/deposit")
 
 @bot.message_handler(commands=["withdraw","Withdraw"])
 def cmd_withdraw(msg):
-    bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://Price alert feature coming soon..")
+    bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://www.nexbitsafe.com/withdrawl")
 
 @bot.message_handler(commands=["support"])
 def cmd_support(msg):
