@@ -118,43 +118,50 @@ def fetch_okx_ticker(instId):
         if isinstance(j, dict) and (j.get("code") == "0" or j.get("code") == 0) and j.get("data"):
             d = j["data"][0]
 
-            last = float(d.get("last") or d.get("lastPrice") or 0)
-
+            last = None
             open24 = None
-            if d.get("open_24h"):
-                try:
-                    open24 = float(d.get("open_24h"))
-                except:
-                    open24 = None
-            elif d.get("open"):
-                try:
-                    open24 = float(d.get("open"))
-                except:
-                    open24 = None
-
+            pct = None
             vol = None
+
             try:
-                vol = float(d.get("volCcy24h") or d.get("vol24h") or 0)
+                last = float(d.get("last") or d.get("lastPrice"))
             except:
-                vol = None
+                pass
+
+            try:
+                open24 = float(d.get("open24h") or d.get("open_24h") or d.get("open"))
+            except:
+                pass
+
+            # ✅ 优先官方 change24h
+            try:
+                if d.get("change24h") is not None:
+                    pct = float(d.get("change24h")) * 100
+            except:
+                pct = None
+
+            # ✅ fallback：自己算 %
+            if pct is None and last is not None and open24:
+                try:
+                    pct = (last - open24) / open24 * 100
+                except:
+                    pct = None
+
+            try:
+                vol = float(d.get("volCcy24h") or d.get("vol24h"))
+            except:
+                pass
 
             return {
                 "last": last,
-                "open24": open24,
+                "pct": pct,
                 "vol": vol
             }
-
-        # fallback
-        if isinstance(j, dict) and "data" in j and isinstance(j["data"], list) and j["data"]:
-            d = j["data"][0]
-            last = float(d.get("last", 0))
-            return {"last": last, "open24": None, "vol": None}
 
     except Exception:
         logger.exception("fetch_okx_ticker error for %s", instId)
 
-    return {"last": None, "open24": None, "vol": None}
-
+    return {"last": None, "pct": None, "vol": None}
 
 def fetch_okx_tickers(symbols):
     out = {}
@@ -201,33 +208,34 @@ def format_market_snapshot_with_pct(tickers):
 
     lines = []
     for s in SYMBOLS:
-        name = s.split("-")[0].ljust(6)
+        name = s.split("-")[0].ljust(5) + "  "  # ✅ 频道专业版固定宽度
 
-        last = tickers.get(s, {}).get("last")
-        open24 = tickers.get(s, {}).get("open24")
-        vol = tickers.get(s, {}).get("vol")
+        data = tickers.get(s, {})
+        last = data.get("last")
+        pct = data.get("pct")
+        vol = data.get("vol")
 
-        price = "N/A" if last is None else f"${last:,.2f}".ljust(11)
+        price = "N/A".ljust(11)
+        if last is not None:
+            price = f"${last:,.2f}".ljust(11)
 
-        if last is not None and open24:
-            pct = (last - open24) / open24 * 100
+        if pct is not None:
             icon = "📈" if pct >= 0 else "📉"
-            pct_str = f"{icon}{pct:+.2f}%".ljust(9)
+            pct_str = f"{icon}{pct:+.2f}%"
         else:
-            pct_str = "   N/A   "
+            pct_str = "N/A"
 
         bar = bars.get(s, BLOCKS[0] * 8)
         vol_str = f"Vol {fmt_vol(vol)}"
 
-        lines.append(f"{name}{bar}  {price}  {pct_str}  {vol_str}")
+        lines.append(
+            f"{name}{bar}  {price}  {pct_str}  {vol_str}"
+        )
 
     header = "📊 Market Snapshot (OKX)\n\n"
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
     return header + "\n".join(lines) + f"\n\n⏱ {ts}"
-
-
-
 # ----------------- Background: market push (to multiple chat ids) -----------------
 def market_push_loop():
     logger.info("Market push loop started (interval=%s)", MARKET_PUSH_INTERVAL)
