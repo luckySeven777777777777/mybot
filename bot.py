@@ -106,38 +106,55 @@ def format_price(v):
         return str(v)
 
 # ----------------- OKX functions -----------------
-def fetch_okx_ticker(instId):
+ddef fetch_okx_ticker(instId):
     try:
-        r = requests_session.get(OKX_TICKER_URL, params={"instId": instId}, timeout=HTTP_TIMEOUT)
+        r = requests_session.get(
+            OKX_TICKER_URL,
+            params={"instId": instId},
+            timeout=HTTP_TIMEOUT
+        )
         j = r.json()
-        # OKX returns code "0" for success
-        if isinstance(j, dict) and (j.get("code") == "0" or j.get("code") == 0) and "data" in j and j["data"]:
+
+        if isinstance(j, dict) and (j.get("code") == "0" or j.get("code") == 0) and j.get("data"):
             d = j["data"][0]
+
             last = float(d.get("last") or d.get("lastPrice") or 0)
-            # OKX provides 24h change fields sometimes: "open_24h" or "open"
+
             open24 = None
             if d.get("open_24h"):
-                try: open24 = float(d.get("open_24h"))
-                except: open24 = None
+                try:
+                    open24 = float(d.get("open_24h"))
+                except:
+                    open24 = None
             elif d.get("open"):
-                try: open24 = float(d.get("open"))
-                except: open24 = None
-                        vol = None
+                try:
+                    open24 = float(d.get("open"))
+                except:
+                    open24 = None
+
+            vol = None
             try:
                 vol = float(d.get("volCcy24h") or d.get("vol24h") or 0)
             except:
                 vol = None
 
-            return {"last": last, "open24": open24, "vol": vol}
+            return {
+                "last": last,
+                "open24": open24,
+                "vol": vol
+            }
 
         # fallback
         if isinstance(j, dict) and "data" in j and isinstance(j["data"], list) and j["data"]:
             d = j["data"][0]
             last = float(d.get("last", 0))
-            return {"last": last, "open24": None}
+            return {"last": last, "open24": None, "vol": None}
+
     except Exception:
         logger.exception("fetch_okx_ticker error for %s", instId)
-    return {"last": None, "open24": None}
+
+    return {"last": None, "open24": None, "vol": None}
+
 
 def fetch_okx_tickers(symbols):
     out = {}
