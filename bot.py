@@ -122,7 +122,14 @@ def fetch_okx_ticker(instId):
             elif d.get("open"):
                 try: open24 = float(d.get("open"))
                 except: open24 = None
-            return {"last": last, "open24": open24}
+                        vol = None
+            try:
+                vol = float(d.get("volCcy24h") or d.get("vol24h") or 0)
+            except:
+                vol = None
+
+            return {"last": last, "open24": open24, "vol": vol}
+
         # fallback
         if isinstance(j, dict) and "data" in j and isinstance(j["data"], list) and j["data"]:
             d = j["data"][0]
@@ -163,27 +170,46 @@ def build_bars(values_dict):
     return bars
 
 def format_market_snapshot_with_pct(tickers):
-    # tickers: {sym: {"last": float, "open24": float or None}}
     values = {s: tickers.get(s, {}).get("last") for s in SYMBOLS}
     bars = build_bars(values)
+
+    def fmt_vol(v):
+        if not v:
+            return "--"
+        if v >= 1_000_000_000:
+            return f"{v/1_000_000_000:.2f}B"
+        if v >= 1_000_000:
+            return f"{v/1_000_000:.0f}M"
+        return str(int(v))
+
     lines = []
     for s in SYMBOLS:
-        short = s.split("-")[0].ljust(6)
+        name = s.split("-")[0].ljust(6)
+
         last = tickers.get(s, {}).get("last")
         open24 = tickers.get(s, {}).get("open24")
-        price_str = "N/A" if last is None else format_price(last)
-        pct_str = ""
+        vol = tickers.get(s, {}).get("vol")
+
+        price = "N/A" if last is None else f"${last:,.2f}".ljust(11)
+
         if last is not None and open24:
-            try:
-                pct = (last - float(open24)) / float(open24) * 100
-                pct_str = f" ({pct:+.2f}%)"
-            except:
-                pct_str = ""
-        bar = bars.get(s, BLOCKS[0]*8)
-        lines.append(f"{short} │ {bar}  {price_str}{pct_str}")
+            pct = (last - open24) / open24 * 100
+            icon = "📈" if pct >= 0 else "📉"
+            pct_str = f"{icon}{pct:+.2f}%".ljust(9)
+        else:
+            pct_str = "   N/A   "
+
+        bar = bars.get(s, BLOCKS[0] * 8)
+        vol_str = f"Vol {fmt_vol(vol)}"
+
+        lines.append(f"{name}{bar}  {price}  {pct_str}  {vol_str}")
+
+    header = "📊 Market Snapshot (OKX)\n\n"
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    header = "📈 Market Snapshot (OKX REST)\n\n"
+
     return header + "\n".join(lines) + f"\n\n⏱ {ts}"
+
+
 
 # ----------------- Background: market push (to multiple chat ids) -----------------
 def market_push_loop():
