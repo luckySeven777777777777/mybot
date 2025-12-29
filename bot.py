@@ -106,7 +106,7 @@ def format_price(v):
         return str(v)
 
 # ----------------- OKX functions -----------------
-ddef fetch_okx_ticker(instId):
+def fetch_okx_ticker(instId):
     try:
         r = requests_session.get(
             OKX_TICKER_URL,
