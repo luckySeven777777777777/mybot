@@ -52,7 +52,7 @@ OKX_TICKER_URL = "https://www.okx.com/api/v5/market/ticker"
 OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/history-candles"
 
 # Intervals
-MARKET_PUSH_INTERVAL = int(os.getenv("MARKET_PUSH_INTERVAL", "600"))  # 10 min default
+MARKET_PUSH_INTERVAL = int(os.getenv("MARKET_PUSH_INTERVAL", "14400"))
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
 POLLING_TIMEOUT = int(os.getenv("TELEBOT_POLLING_TIMEOUT", "60"))
 
