@@ -14,7 +14,6 @@ Final merged enhanced bot.py
 """
 
 import os, sys, time, json, math, threading, traceback, requests
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 import logging
 import telebot
@@ -193,6 +192,9 @@ def build_bars(values_dict):
         bars[k] = "".join(bar)
     return bars
 
+from zoneinfo import ZoneInfo
+from datetime import datetime
+
 def format_market_snapshot_with_pct(tickers):
     values = {s: tickers.get(s, {}).get("last") for s in SYMBOLS}
     bars = build_bars(values)
@@ -208,7 +210,7 @@ def format_market_snapshot_with_pct(tickers):
 
     lines = []
     for s in SYMBOLS:
-        name = s.split("-")[0].ljust(5) + "  "  # ✅ 频道专业版固定宽度
+        name = s.split("-")[0].ljust(5) + "  "
 
         data = tickers.get(s, {})
         last = data.get("last")
@@ -233,9 +235,13 @@ def format_market_snapshot_with_pct(tickers):
         )
 
     header = "📊 Market Snapshot (OKX)\n\n"
-    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    ny_time = datetime.now(ZoneInfo("America/New_York"))
+    ts = ny_time.strftime("%Y-%m-%d %H:%M:%S NY")
 
     return header + "\n".join(lines) + f"\n\n⏱ {ts}"
+
+
 # ----------------- Background: market push (to multiple chat ids) -----------------
 def market_push_loop():
     logger.info("Market push loop started (interval=%s)", MARKET_PUSH_INTERVAL)
