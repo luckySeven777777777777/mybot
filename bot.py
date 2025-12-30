@@ -208,6 +208,15 @@ def format_market_snapshot_with_pct(tickers):
             return f"{v/1_000_000:.0f}M"
         return str(int(v))
 
+    # 🔥 Top3 放量（按 vol 排序）
+    vols = {
+        s: tickers.get(s, {}).get("vol") or 0
+        for s in SYMBOLS
+    }
+    top3_symbols = set(
+        [k for k, _ in sorted(vols.items(), key=lambda x: x[1], reverse=True)[:3]]
+    )
+
     lines = []
     for s in SYMBOLS:
         name = s.split("-")[0].ljust(5) + "  "
@@ -230,8 +239,10 @@ def format_market_snapshot_with_pct(tickers):
         bar = bars.get(s, BLOCKS[0] * 8)
         vol_str = f"Vol {fmt_vol(vol)}"
 
+        fire = " 🔥" if s in top3_symbols else ""
+
         lines.append(
-            f"{name}{bar}  {price}  {pct_str}  {vol_str}"
+            f"{name}{bar}  {price}  {pct_str}  {vol_str}{fire}"
         )
 
     header = "📊 Market Snapshot (OKX)\n\n"
@@ -240,6 +251,7 @@ def format_market_snapshot_with_pct(tickers):
     ts = ny_time.strftime("%Y-%m-%d %H:%M:%S NY")
 
     return header + "\n".join(lines) + f"\n\n⏱ {ts}"
+
 
 
 # ----------------- Background: market push (to multiple chat ids) -----------------
