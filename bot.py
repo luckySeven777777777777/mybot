@@ -383,19 +383,19 @@ def cmd_feature(msg):
 
 @bot.message_handler(commands=["trade","Trade"])
 def cmd_deposit(msg):
-    bot.reply_to(msg, "💰 *Trade Guide**:\nhttps://www.nexbitsafe.com/trade")
+    bot.reply_to(msg, "💰 *Trade Guide**:\nhttps://www.xwallets.cc/trade")
 
 @bot.message_handler(commands=["deposit","Deposit"])
 def cmd_deposit(msg):
-    bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://www.nexbitsafe.com/deposit")
+    bot.reply_to(msg, "💰 **Deposit Guide**:\nhttps://www.xwallets.cc/deposit")
 
 @bot.message_handler(commands=["withdraw","Withdraw"])
 def cmd_withdraw(msg):
-    bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://www.nexbitsafe.com/withdrawl")
+    bot.reply_to(msg, "💵 **Withdraw Guide**:\nhttps://www.xwallets.cc/withdrawl")
 
 @bot.message_handler(commands=["support"])
 def cmd_support(msg):
-    bot.reply_to(msg, "💬 **Customer Support**\n• 24-hour online customer service\n• Telegram: https://t.me/nexbitonlineservice\n• Email: lucky077779999@gmail.com")
+    bot.reply_to(msg, "💬 **Customer Support**\n• 24-hour online customer service\n• Telegram: https://t.me/xwallettonlineservice\n• Email: lucky077779999@gmail.com")
 
 # -------- admin commands -----------
 @bot.message_handler(commands=["status"])
